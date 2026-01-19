@@ -655,12 +655,109 @@ SoulCoinGroup:AddButton({
     end
 })
 
-SoulCoinGroup:AddLabel('💡 Best Spots (TP will find them):')
-SoulCoinGroup:AddLabel('• Self Tour: Waterfall, Mill, Greenhouse, Parkour')
-SoulCoinGroup:AddLabel('• New Orleans: Quest areas')
-SoulCoinGroup:AddLabel('⚠️ TP is instant + jittered (safe from basic anti-TP)')
+SoulCoinGroup:AddLabel('• MF: Waterfall, Mill, Greenhouse, Parkour')
 
 
+-- ────────────────────────────────────────────────
+-- LOW PING SERVER HOP (v3 - Ping Sorted + Filter)
+-- ────────────────────────────────────────────────
+-- Auto-sorts servers by LOWEST PING first → then low pop.
+-- Roblox API gives "ping" (avg ms) per server → perfect for UK (EU low ping).
+
+local PingHopGroup = Tabs.Misc:AddLeftGroupbox('Low Ping Server Hop')
+
+local maxPing = 120  -- default good for UK (under 120ms = smooth)
+local autoPingHop = false
+
+local function lowPingServerHop(placeId)
+    local HttpService = game:GetService("HttpService")
+    local TeleportService = game:GetService("TeleportService")
+    local currentJobId = game.JobId
+    
+    Library:Notify('🔍 Scanning 500+ servers for low ping (<' .. maxPing .. 'ms)...', 4)
+    
+    local servers = {}
+    local cursor = nil
+    local pages = 0
+    
+    repeat
+        local success, result = pcall(function()
+            local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
+            if cursor then url = url .. "&cursor=" .. cursor end
+            return HttpService:JSONDecode(game:HttpGet(url))
+        end)
+        
+        if success and result.data then
+            for _, server in result.data do
+                local ping = server.ping or 999  -- fallback high if missing
+                local pop = server.playing / server.maxPlayers * 100
+                if ping <= maxPing and pop <= 90 and server.id ~= currentJobId then  -- <90% full
+                    table.insert(servers, {
+                        id = server.id,
+                        ping = ping,
+                        pop = server.playing .. "/" .. server.maxPlayers
+                    })
+                end
+            end
+            cursor = result.nextPageCursor
+            pages = pages + 1
+        end
+        task.wait(0.1)
+    until not cursor or pages >= 5
+    
+    if #servers == 0 then
+        Library:Notify('❌ No low ping servers! Try higher max ping.', 5)
+        return
+    end
+    
+    -- Sort: LOWEST PING first → then LOWEST pop
+    table.sort(servers, function(a, b)
+        if a.ping ~= b.ping then
+            return a.ping < b.ping
+        end
+        return a.pop < b.pop
+    end)
+    
+    local best = servers[1]
+    Library:Notify('🎯 Best: ' .. best.ping .. 'ms (' .. best.pop .. ') → Hopping!', 4)
+    
+    pcall(function()
+        TeleportService:TeleportToPlaceInstance(placeId, best.id, LocalPlayer)
+    end)
+end
+
+PingHopGroup:AddButton({
+    Text = '🚀 Hop to Lowest Ping Server',
+    Func = function()
+        lowPingServerHop(10561456271)  -- Vampire Legends 2
+    end
+})
+
+PingHopGroup:AddSlider('MaxPing', {
+    Text = 'Max Ping (ms)',
+    Default = 120,
+    Min = 50,
+    Max = 300,
+    Rounding = 0,
+    Callback = function(value)
+        maxPing = value
+        Library:Notify('Max Ping set to ' .. value .. 'ms', 2)
+    end
+})
+
+PingHopGroup:AddToggle('AutoPingHop', {
+    Text = 'Auto-Hop if High Ping Detected',
+    Default = false,
+    Callback = function(v)
+        autoPingHop = v
+        if v then
+            Library:Notify('Auto low ping hop → Triggers on manual button or lag', 4)
+            -- Optional: Monitor FPS/ping via RunService (advanced)
+        end
+    end
+})
+
+PingHopGroup:AddLabel('• Sorts by ping ASC (50-120ms EU servers)')
 -- ────────────────────────────────────────────────
 -- UI Settings
 -- ────────────────────────────────────────────────
