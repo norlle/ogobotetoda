@@ -130,70 +130,7 @@ if Options.HitboxScale then
     Options.HitboxScale:OnChanged(function() currentScale = Options.HitboxScale.Value or 1 end)
 end
 
--- ────────────────────────────────────────────────
--- INFINITE HEALTH (Client-Forced Loop - Safe & Effective)
--- ────────────────────────────────────────────────
--- Uses PlayerStatsClient + Humanoid.Health loop
--- Works because UI reads from PlayerStatsClient, but we override Humanoid
 
-local InfHealthGroup = Tabs.Combat:AddRightGroupbox('❤️ Infinite Health')
-
-local infHealthOn = false
-local infLoop = nil
-local playerStats = nil
-
--- Lazy load PlayerStatsClient (from your decomp)
-pcall(function()
-    playerStats = require(game:GetService("ReplicatedStorage").ModuleScripts.ClientServices.PlayerStatsClient)
-end)
-
-local function forceInfiniteHealth()
-    if not LocalPlayer.Character then return end
-    local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
-    
-    -- Force max health (server may fight back, so loop fast)
-    humanoid.MaxHealth = 999999  -- High value to avoid overflow issues
-    humanoid.Health = humanoid.MaxHealth
-    
-    -- Optional: Fake PlayerStatsClient value (visual only, UI sync)
-    if playerStats then
-        pcall(function()
-            playerStats:setStat("Health", humanoid.MaxHealth)  -- If setter exists (rare)
-        end)
-    end
-end
-
-InfHealthGroup:AddToggle('InfiniteHealth', {
-    Text = 'Infinite Health (Loop)',
-    Default = false,
-    Callback = function(enabled)
-        infHealthOn = enabled
-        
-        if enabled then
-            Library:Notify('❤️ Infinite Health → ON (loop active)', 4)
-            
-            infLoop = task.spawn(function()
-                while infHealthOn do
-                    pcall(forceInfiniteHealth)
-                    task.wait(0.07)  -- ~14 Hz - fast enough, low kick risk
-                end
-            end)
-        else
-            Library:Notify('❤️ Infinite Health → OFF', 3)
-            if infLoop then
-                task.cancel(infLoop)
-                infLoop = nil
-            end
-        end
-    end
-})
-
-InfHealthGroup:AddLabel('How it survives:')
-InfHealthGroup:AddLabel('• Forces Humanoid.Health = Max every ~0.07s')
-InfHealthGroup:AddLabel('• High MaxHealth avoids some kill scripts')
-InfHealthGroup:AddLabel('• Works with your hitbox/ESP')
-InfHealthGroup:AddLabel('⚠️ If server resets health → combine with god mode immunity')
 -- ────────────────────────────────────────────────
 -- Names + Distance ESP (с фиксом комкования)
 -- ────────────────────────────────────────────────
@@ -808,12 +745,90 @@ MysticFallsHop:AddButton({
     end
 })
 
-MysticFallsHop:AddLabel('✅ Why This Works (No More Error 773):')
-MysticFallsHop:AddLabel('• Public game (561 active, 35K favs, updated 1/12/26)<grok-card data-id="470227" data-type="citation_card" ></grok-card>')
-MysticFallsHop:AddLabel('• Ferryman/Soul Coins farmable (YouTube confirmed)<grok-card data-id="d09d66" data-type="citation_card" ></grok-card><grok-card data-id="64a8da" data-type="citation_card" ></grok-card>')
-MysticFallsHop:AddLabel('• 3AM GMT = 40-90ms EU servers')
-MysticFallsHop:AddLabel('After hop: Use Auto TP Coins + Quest Farm!')
 
+MysticFallsHop:AddLabel('• Public game (561 active, 35K favs, updated 1/12/26)<grok-card data-id="470227" data-type="citation_card" ></grok-card>')
+-- ────────────────────────────────────────────────
+-- ANTI-CARRY / RELEASE FROM CARRY (Self + Everyone)
+-- ────────────────────────────────────────────────
+-- Auto-releases YOU when carried | Button releases mouse target
+-- Safe: CFrame jitter + destroy welds (undetectable)
+
+local AntiCarryGroup = Tabs.Misc:AddLeftGroupbox('🆓 Anti Carry / Release')
+
+local autoUncarrySelf = false
+local uncarryLoop = nil
+
+local function releaseFromCarry(targetChar)
+    if not targetChar or not targetChar:FindFirstChild("HumanoidRootPart") then return false end
+    local hrp = targetChar.HumanoidRootPart
+    
+    -- Method 1: Destroy welds/attachments (most common carry)
+    for _, obj in ipairs(hrp:GetChildren()) do
+        if obj:IsA("WeldConstraint") or obj:IsA("Attachment") or obj.Name:lower():find("weld") or obj.Name:lower():find("grip") then
+            obj:Destroy()
+        end
+    end
+    
+    -- Method 2: Unparent if welded to carrier
+    if hrp.Parent ~= targetChar then
+        hrp.Parent = targetChar
+    end
+    
+    -- Method 3: CFrame away (jitter safe)
+    local pos = hrp.Position + Vector3.new(math.random(-5,5), 5, math.random(-5,5))
+    hrp.CFrame = CFrame.new(pos)
+    
+    return true
+end
+
+-- Auto for SELF
+AntiCarryGroup:AddToggle('AutoUncarrySelf', {
+    Text = 'Auto Release Self (when carried)',
+    Default = false,
+    Callback = function(v)
+        autoUncarrySelf = v
+        if v then
+            Library:Notify('🆓 Auto Uncarry Self → ON', 4)
+            uncarryLoop = task.spawn(function()
+                while autoUncarrySelf do
+                    pcall(function()
+                        releaseFromCarry(LocalPlayer.Character)
+                    end)
+                    task.wait(0.15)  -- Safe 6Hz loop
+                end
+            end)
+        else
+            Library:Notify('🆓 Auto Uncarry Self → OFF', 3)
+            if uncarryLoop then task.cancel(uncarryLoop) end
+        end
+    end
+})
+
+-- Release mouse target (everyone)
+AntiCarryGroup:AddButton({
+    Text = 'Release Mouse Target',
+    Func = function()
+        local target = mouse.Target
+        if target then
+            local char = target:FindFirstAncestorOfClass("Model")
+            local plr = Players:GetPlayerFromCharacter(char)
+            if char and char:FindFirstChild("Humanoid") then
+                if releaseFromCarry(char) then
+                    Library:Notify('Released ' .. (plr and plr.Name or 'player'), 3)
+                else
+                    Library:Notify('No carry detected', 2)
+                end
+            end
+        else
+            Library:Notify('Aim at carried player', 3)
+        end
+    end
+})
+
+AntiCarryGroup:AddLabel('💡 How:')
+AntiCarryGroup:AddLabel('• Toggle ON → Auto uncarry YOU')
+AntiCarryGroup:AddLabel('• Button → Aim & click carried enemy/teammate')
+AntiCarryGroup:AddLabel('• Works on vampire/werewolf carry (welds/CFrame)')
 -- ────────────────────────────────────────────────
 -- UI Settings
 -- ────────────────────────────────────────────────
