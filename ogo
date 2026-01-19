@@ -532,6 +532,135 @@ ShopGroup:AddToggle('AutoBuyToggle', {
         end
     end
 })
+
+-- ────────────────────────────────────────────────
+-- AUTO SOUL COIN FARM + TELEPORT (v3 - TP to Coins)
+-- ────────────────────────────────────────────────
+local SoulCoinGroup = Tabs.Misc:AddRightGroupbox('Auto Soul Coin Farm + TP')
+
+local autoTPPickup = false
+local tpSpeed = 0.3  -- delay between TPs
+local pickupRemote = ReplicatedStorage.Remotes.QuestService.ToServer.PickupQuestItem_
+
+local function getAllCoinObjects()
+    local coins = {}
+    for _, obj in workspace:GetDescendants() do
+        if (obj.Name:lower():find("soulcoin") or obj:FindFirstChild("SoulCoin")) and obj:IsA("BasePart") then
+            table.insert(coins, obj)
+        end
+    end
+    -- Also check quest item parents (from decomp: objectRef)
+    for _, obj in workspace:GetDescendants() do
+        if obj.Name:match("[A-Za-z]+") and obj:FindFirstChildWhichIsA("BasePart") then  -- potential spawns
+            local coinChild = obj:FindFirstChild("SoulCoin")
+            if coinChild then
+                table.insert(coins, coinChild)
+            end
+        end
+    end
+    return coins
+end
+
+local function tpToCoin(coin)
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+    local hrp = LocalPlayer.Character.HumanoidRootPart
+    local targetCFrame = coin.CFrame + Vector3.new(0, 3, 0) + Vector3.new(math.random(-2,2), 0, math.random(-2,2))  -- jitter anti-detect
+    hrp.CFrame = targetCFrame
+end
+
+SoulCoinGroup:AddToggle('AutoTPPickup', {
+    Text = 'Auto TP + Pickup Coins',
+    Default = false,
+    Callback = function(v)
+        autoTPPickup = v
+        if v then
+            Library:Notify('Auto TP Coins → ON | Will teleport & collect all!', 4)
+            task.spawn(function()
+                while autoTPPickup do
+                    local coins = getAllCoinObjects()
+                    if #coins > 0 then
+                        Library:Notify(#coins .. ' coins found → TPing...', 2)
+                        for _, coin in ipairs(coins) do
+                            if coin and coin.Parent then
+                                tpToCoin(coin)
+                                task.wait(0.1)  -- micro delay after TP
+                                pcall(function()
+                                    pickupRemote:InvokeServer("Ferryman", coin.Name or coin.Parent.Name)
+                                end)
+                                task.wait(tpSpeed)
+                            end
+                        end
+                    else
+                        Library:Notify('No coins found → walk around map', 3)
+                    end
+                    task.wait(1)  -- respawn check delay
+                end
+            end)
+        else
+            Library:Notify('Auto TP Coins → OFF', 3)
+        end
+    end
+})
+
+SoulCoinGroup:AddSlider('TPSpeed', {
+    Text = 'TP Delay',
+    Default = 0.3,
+    Min = 0.1,
+    Max = 2,
+    Rounding = 2,
+    Callback = function(value)
+        tpSpeed = value
+    end
+})
+
+SoulCoinGroup:AddButton({
+    Text = 'TP to Nearest Coin (Single)',
+    Func = function()
+        local coins = getAllCoinObjects()
+        if #coins > 0 then
+            local nearest = coins[1]  -- or sort by distance
+            for _, coin in ipairs(coins) do
+                local dist = (LocalPlayer.Character.HumanoidRootPart.Position - coin.Position).Magnitude
+                if dist < (LocalPlayer.Character.HumanoidRootPart.Position - nearest.Position).Magnitude then
+                    nearest = coin
+                end
+            end
+            tpToCoin(nearest)
+            pcall(function()
+                pickupRemote:InvokeServer("Ferryman", nearest.Name or nearest.Parent.Name)
+            end)
+            Library:Notify('TPed to nearest coin & collected!', 3)
+        else
+            Library:Notify('No coins nearby!', 4)
+        end
+    end
+})
+
+SoulCoinGroup:AddButton({
+    Text = 'TP + Pickup ALL Coins Now',
+    Func = function()
+        local coins = getAllCoinObjects()
+        Library:Notify('TPing to ' .. #coins .. ' coins...', 3)
+        for _, coin in ipairs(coins) do
+            if coin and coin.Parent then
+                tpToCoin(coin)
+                task.wait(0.15)
+                pcall(function()
+                    pickupRemote:InvokeServer("Ferryman", coin.Name or coin.Parent.Name)
+                end)
+                task.wait(0.2)
+            end
+        end
+        Library:Notify('All coins collected! Check backpack.', 4)
+    end
+})
+
+SoulCoinGroup:AddLabel('💡 Best Spots (TP will find them):')
+SoulCoinGroup:AddLabel('• Self Tour: Waterfall, Mill, Greenhouse, Parkour')
+SoulCoinGroup:AddLabel('• New Orleans: Quest areas')
+SoulCoinGroup:AddLabel('⚠️ TP is instant + jittered (safe from basic anti-TP)')
+
+
 -- ────────────────────────────────────────────────
 -- UI Settings
 -- ────────────────────────────────────────────────
