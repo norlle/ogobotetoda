@@ -1,0 +1,492 @@
+-- Katy's Vampire Legends 2 Hub (LinoriaLib - Minimal & Safe)
+-- violin-suzutsuki mirror | FULLY SAFE VERSION
+
+local repo = 'https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/'
+local Library = loadstring(game:HttpGet(repo .. 'Library.lua'))()
+local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))()
+local SaveManager = loadstring(game:HttpGet(repo .. 'addons/SaveManager.lua'))()
+
+local Window = Library:CreateWindow({
+    Title = 'Norlape\'s Hub 🧛‍♀️',
+    Center = true,
+    AutoShow = true,
+})
+
+local Tabs = {
+    Combat = Window:AddTab('Combat'),
+    Visuals = Window:AddTab('Visuals'),
+    Misc = Window:AddTab('Misc'),
+    ['UI Settings'] = Window:AddTab('UI Settings'),
+}
+
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local TeleportService = game:GetService("TeleportService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+local mouse = LocalPlayer:GetMouse()
+mouse.Icon = "rbxasset://textures\\GunCursor.png"
+
+-- Global variables
+local hitboxEnabled = false
+local showStatusIndicator = true
+local statusDrawing = nil
+
+-- ────────────────────────────────────────────────
+-- ULTRA WIDE HITBOX (SAFE)
+-- ────────────────────────────────────────────────
+local MegaGroup = Tabs.Combat:AddLeftGroupbox('ULTRA WIDE HITBOX')
+MegaGroup:AddToggle('MegaHitboxEnabled', {Text = 'Enabled', Default = false})
+MegaGroup:AddSlider('HitboxScale', {Text = 'Grid Scale', Default = 1.0, Min = 0.4, Max = 2.5, Rounding = 2, Suffix = '×'})
+
+local baseGridOffsets = {}
+local function addRingPoints(radius, count)
+    if radius == 0 then table.insert(baseGridOffsets, Vector2.new(0,0)) return end
+    for i = 0, count - 1 do
+        local angle = (i / count) * math.pi * 2 + math.rad(22.5)
+        table.insert(baseGridOffsets, Vector2.new(math.cos(angle)*radius, math.sin(angle)*radius))
+    end
+end
+
+addRingPoints(0,1) addRingPoints(45,8) addRingPoints(100,12) addRingPoints(180,16) addRingPoints(260,8)
+local extras = {Vector2.new(320,320),Vector2.new(-320,-320),Vector2.new(320,-320),Vector2.new(-320,320),Vector2.new(0,380),Vector2.new(0,-380),Vector2.new(380,0),Vector2.new(-380,0)}
+for _,v in extras do table.insert(baseGridOffsets,v) end
+
+local SUPER_RANGE = 4800
+local function getJitter() return Vector2.new(math.random(-15,15), math.random(-15,15)) end
+
+local HitDetection, AbilityHandler
+pcall(function()
+    HitDetection = require(ReplicatedStorage.ModuleScripts.TargetSystem.HitDetection)
+    AbilityHandler = require(LocalPlayer.PlayerScripts.ModuleScripts.AbilityHandler)
+end)
+
+local oldHitscan = nil
+local currentScale = 1.0
+
+local function getScaledOffsets()
+    local s = (Options.HitboxScale and Options.HitboxScale.Value) or 1
+    local t = {}
+    for _,o in baseGridOffsets do table.insert(t, o * s) end
+    return t
+end
+
+local function hookedHitscan(self)
+    if not hitboxEnabled or not HitDetection or not AbilityHandler then 
+        return oldHitscan and oldHitscan(self) 
+    end
+    local cam = workspace.CurrentCamera 
+    if not cam then return oldHitscan and oldHitscan(self) end
+    local best, bestD = nil, math.huge
+    local centerTh = 70 * currentScale
+    local offs = getScaledOffsets()
+    for _, offset in offs do
+        local probe = Vector2.new(mouse.X, mouse.Y) + offset + getJitter()
+        local vx,vy = cam.ViewportSize.X, cam.ViewportSize.Y
+        probe = Vector2.new(math.clamp(probe.X, -vx*0.2, vx*1.2), math.clamp(probe.Y, -vy*0.2, vy*1.2))
+        local ray = cam:ScreenPointToRay(probe.X, probe.Y)
+        local dir = ray.Direction * SUPER_RANGE
+        local p = RaycastParams.new()
+        p.FilterDescendantsInstances = {LocalPlayer.Character or workspace}
+        p.FilterType = Enum.RaycastFilterType.Exclude
+        p.IgnoreWater = true
+        local res = workspace:Raycast(ray.Origin, dir, p)
+        if res then
+            local mdl = res.Instance:FindFirstAncestorWhichIsA("Model")
+            if mdl and mdl:FindFirstChildWhichIsA("Humanoid") then
+                local tp = Players:GetPlayerFromCharacter(mdl)
+                if tp and tp ~= LocalPlayer and AbilityHandler.canBeAffected(tp, self._name) then
+                    local d = (res.Position - ray.Origin).Magnitude
+                    if d < bestD then bestD = d best = mdl end
+                    if (offset + getJitter()).Magnitude < centerTh then return mdl end
+                end
+            end
+        end
+    end
+    return best or (oldHitscan and oldHitscan(self))
+end
+
+Toggles.MegaHitboxEnabled:OnChanged(function(v)
+    hitboxEnabled = v
+    if v then
+        if not oldHitscan and HitDetection then 
+            oldHitscan = HitDetection.Hitscan 
+            HitDetection.Hitscan = hookedHitscan 
+        end
+        Library:Notify('Ultra Hitbox → ON', 4)
+    else
+        if oldHitscan and HitDetection then 
+            HitDetection.Hitscan = oldHitscan 
+            oldHitscan = nil 
+        end
+        Library:Notify('Ultra Hitbox → OFF', 3)
+    end
+end)
+
+if Options.HitboxScale then
+    Options.HitboxScale:OnChanged(function() currentScale = Options.HitboxScale.Value or 1 end)
+end
+
+-- ────────────────────────────────────────────────
+-- Names + Distance ESP (с фиксом комкования)
+-- ────────────────────────────────────────────────
+local ESPGroup = Tabs.Visuals:AddLeftGroupbox('Names + Distance ESP')
+ESPGroup:AddToggle('NamesESPEnabled', {Text = 'Enabled', Default = false})
+ESPGroup:AddLabel('Text Color'):AddColorPicker('NamesESPColor', {Default = Color3.fromRGB(255,255,255)})
+ESPGroup:AddSlider('NamesESPDistance', {Text = 'Max Distance', Default = 800, Min = 200, Max = 1500, Rounding = 0})
+
+local ESP_DATA = {}
+
+local function WorldToScreen(pos)
+    local vec, on = Camera:WorldToViewportPoint(pos)
+    return Vector2.new(vec.X, vec.Y), on
+end
+
+local function Cleanup(plr)
+    local d = ESP_DATA[plr] 
+    if d then
+        if d.nameTag then d.nameTag:Remove() end
+        if d.userName then d.userName:Remove() end
+        if d.dist then d.dist:Remove() end
+        ESP_DATA[plr] = nil
+    end
+end
+
+local function CreateESP(plr)
+    if plr == LocalPlayer then return end
+    Cleanup(plr)
+    local d = {} ESP_DATA[plr] = d
+    d.nameTag = Drawing.new("Text") 
+    d.nameTag.Size=17 d.nameTag.Center=true d.nameTag.Outline=true 
+    d.nameTag.OutlineColor=Color3.new(0,0,0) d.nameTag.Visible=false
+    d.userName = Drawing.new("Text") 
+    d.userName.Size=15 d.userName.Center=true d.userName.Outline=true 
+    d.userName.OutlineColor=Color3.new(0,0,0) d.userName.Visible=false
+    d.dist = Drawing.new("Text") 
+    d.dist.Size=14 d.dist.Center=true d.dist.Outline=true 
+    d.dist.OutlineColor=Color3.new(0,0,0) d.dist.Visible=false
+end
+
+local function UpdateNamesESP()
+    if not Toggles.NamesESPEnabled or not Toggles.NamesESPEnabled.Value then 
+        for _,d in pairs(ESP_DATA) do 
+            if d.nameTag then d.nameTag.Visible=false end
+            if d.userName then d.userName.Visible=false end
+            if d.dist then d.dist.Visible=false end
+        end 
+        return 
+    end
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") 
+    if not root then return end
+    local col = (Options.NamesESPColor and Options.NamesESPColor.Value) or Color3.fromRGB(255,255,255)
+    local maxD = (Options.NamesESPDistance and Options.NamesESPDistance.Value) or 800
+    local viewport = Camera.ViewportSize
+    for plr,data in pairs(ESP_DATA) do
+        local char = plr.Character 
+        local r = char and char:FindFirstChild("HumanoidRootPart")
+        local h = char and char:FindFirstChild("Head") 
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not (r and h and hum and hum.Health > 0) then 
+            if data.nameTag then data.nameTag.Visible=false end
+            if data.userName then data.userName.Visible=false end
+            if data.dist then data.dist.Visible=false end
+            continue 
+        end
+        local dist = (r.Position - root.Position).Magnitude 
+        if dist > maxD then 
+            if data.nameTag then data.nameTag.Visible=false end
+            if data.userName then data.userName.Visible=false end
+            if data.dist then data.dist.Visible=false end
+            continue 
+        end
+        local pos, onScr = WorldToScreen(h.Position + Vector3.new(0,0.5,0)) 
+        if not onScr 
+           or pos.X < -500 or pos.X > viewport.X + 500 
+           or pos.Y < -500 or pos.Y > viewport.Y + 500 then
+            if data.nameTag then data.nameTag.Visible=false end
+            if data.userName then data.userName.Visible=false end
+            if data.dist then data.dist.Visible=false end
+            continue 
+        end
+        if data.nameTag then
+            data.nameTag.Text = plr.DisplayName or plr.Name 
+            data.nameTag.Position = pos - Vector2.new(0,22) 
+            data.nameTag.Color = col 
+            data.nameTag.Visible = true
+        end
+        if data.userName then
+            data.userName.Text = "@"..plr.Name 
+            data.userName.Position = pos + Vector2.new(0,2) 
+            data.userName.Color = Color3.new(col.R*0.9,col.G*0.9,col.B*0.9) 
+            data.userName.Visible = true
+        end
+        if data.dist then
+            data.dist.Text = math.floor(dist).." studs" 
+            data.dist.Position = pos + Vector2.new(0,20) 
+            data.dist.Color = Color3.new(0.7,0.7,1) 
+            data.dist.Visible = true
+        end
+    end
+end
+
+for _,p in Players:GetPlayers() do CreateESP(p) end
+Players.PlayerAdded:Connect(function(p) 
+    CreateESP(p) 
+    p.CharacterAdded:Connect(function() task.wait(0.2) Cleanup(p) CreateESP(p) end) 
+end)
+Players.PlayerRemoving:Connect(Cleanup)
+RunService.RenderStepped:Connect(UpdateNamesESP)
+
+-- ────────────────────────────────────────────────
+-- BYPASS AUTO DETECTION
+-- ────────────────────────────────────────────────
+local BypassGroup = Tabs.Misc:AddRightGroupbox('Bypass Auto Detection')
+local detectionBlocked = false
+
+BypassGroup:AddToggle('BlockDetection', {
+    Text = 'Block AutoclickerDetected Remote',
+    Default = false,
+    Callback = function(v)
+        detectionBlocked = v
+        Library:Notify(v and 'Autoclicker detection blocked' or 'Autoclicker detection unblocked', 4)
+    end
+})
+
+pcall(function()
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if detectionBlocked and self.Name == "AutoclickerDetected" and method == "FireServer" then
+            return
+        end
+        return oldNamecall(self, ...)
+    end))
+end)
+
+-- ────────────────────────────────────────────────
+-- Rejoin + Instant Remote Reset (нормальный, через Remote)
+-- ────────────────────────────────────────────────
+local ExtraMisc = Tabs.Misc:AddRightGroupbox('Extra')
+
+local function doRejoin()
+    Library:Notify('Rejoining current server...', 4)
+    task.wait(0.4)
+    TeleportService:Teleport(game.PlaceId, LocalPlayer)
+end
+
+ExtraMisc:AddButton({Text = 'Rejoin Server', Func = doRejoin})
+
+local function resetCharacter()
+    pcall(function()
+        -- Основной ресет
+        ReplicatedStorage.Remotes.GameServices.ToServer.PlayerReset:FireServer()
+        
+        -- Завершение limbo/состояния
+        local args = {false}
+        ReplicatedStorage.Remotes.GameServices.ToServer.LimboDecidedNew:InvokeServer(unpack(args))
+    end)
+    Library:Notify('Instant Remote Reset → executed', 3)
+end
+
+ExtraMisc:AddButton({Text = 'Instant Remote Reset', Func = resetCharacter})
+
+ExtraMisc:AddLabel('Reset Keybind'):AddKeyPicker('ResetKey', {
+    Default = 'None',
+    NoUI = true,
+    Text = 'Reset Character',
+    Mode = 'Toggle'
+})
+
+-- ────────────────────────────────────────────────
+-- Status Indicator
+-- ────────────────────────────────────────────────
+local StatusGroup = Tabs.Misc:AddLeftGroupbox('Status Indicator')
+
+StatusGroup:AddToggle('ShowStatus', {
+    Text = 'Show Status Overlay',
+    Default = true,
+    Callback = function(v)
+        showStatusIndicator = v
+        if not v and statusDrawing then
+            statusDrawing:Remove()
+            statusDrawing = nil
+        end
+    end
+})
+
+local function updateStatusIndicator()
+    if not showStatusIndicator then return end
+
+    if not statusDrawing then
+        statusDrawing = Drawing.new("Text")
+        statusDrawing.Size = 16
+        statusDrawing.Center = false
+        statusDrawing.Outline = true
+        statusDrawing.OutlineColor = Color3.new(0,0,0)
+        statusDrawing.Visible = true
+    end
+
+    local hitboxStatus = hitboxEnabled and "ON" or "OFF"
+
+    statusDrawing.Text = string.format("Ultra Hitbox: %s", hitboxStatus)
+    statusDrawing.Color = Color3.new(1,1,1)
+    local viewport = Camera.ViewportSize
+    statusDrawing.Position = Vector2.new(viewport.X - 220, 20)
+end
+
+RunService.RenderStepped:Connect(updateStatusIndicator)
+
+-- ────────────────────────────────────────────────
+-- ALL INPUT BINDINGS (SAFE)
+-- ────────────────────────────────────────────────
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+
+    if input.KeyCode == Enum.KeyCode.N then
+        resetCharacter()
+    elseif Options.ResetKey and Options.ResetKey.Value and input.KeyCode == Options.ResetKey.Value then
+        resetCharacter()
+    end
+end)
+
+-- ────────────────────────────────────────────────
+-- Anti-Shaders & Blind Screens (Sol, Ossox, fog, etc) — в Misc справа
+-- ────────────────────────────────────────────────
+local AntiShaderGroup = Tabs.Misc:AddRightGroupbox('Anti-Shaders & Blind')
+
+local FusionStates = nil
+pcall(function()
+    FusionStates = ReplicatedStorage:WaitForChild("Bindables"):WaitForChild("FusionStates", 8)
+end)
+
+local InstantTransition = nil
+if FusionStates then
+    pcall(function()
+        InstantTransition = FusionStates:WaitForChild("InstantScreenTransition", 5)
+    end)
+end
+
+local antiBlindEnabled = false
+local oldNamecall = nil
+
+-- Перехват .Fire (если InstantTransition существует)
+if InstantTransition then
+    pcall(function()
+        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            local args = {...}
+            
+            if antiBlindEnabled 
+               and self == InstantTransition 
+               and method == "Fire" 
+               and args[1] == true then
+                return  -- блокируем включение слепоты
+            end
+            
+            return oldNamecall(self, ...)
+        end))
+    end)
+end
+
+local autoClearThread = nil
+
+local function enableAntiBlind()
+    antiBlindEnabled = true
+    
+    -- Авто-очистка каждые 0.3 сек
+    autoClearThread = task.spawn(function()
+        while antiBlindEnabled do
+            if InstantTransition then
+                pcall(function()
+                    InstantTransition:Fire(false)
+                end)
+            end
+            task.wait(0.3)
+        end
+    end)
+    
+    -- Fullbright + отключение эффектов
+    pcall(function()
+        game.Lighting.Brightness = 3
+        game.Lighting.GlobalShadows = false
+        game.Lighting.Ambient = Color3.fromRGB(180, 180, 180)
+    end)
+    
+    pcall(function()
+        for _, obj in game.Lighting:GetDescendants() do
+            if obj:IsA("PostEffect") then obj.Enabled = false end
+            if obj:IsA("Atmosphere") then obj.Density = 0 end
+        end
+    end)
+    
+    Library:Notify("Anti-Shaders & Blind → ON", 4)
+end
+
+local function disableAntiBlind()
+    antiBlindEnabled = false
+    
+    if autoClearThread then
+        task.cancel(autoClearThread)
+        autoClearThread = nil
+    end
+    
+    pcall(function()
+        game.Lighting.Brightness = 1
+        game.Lighting.GlobalShadows = true
+        game.Lighting.Ambient = Color3.fromRGB(0,0,0)
+    end)
+    
+    Library:Notify("Anti-Shaders & Blind → OFF", 4)
+end
+
+AntiShaderGroup:AddToggle('AntiBlindToggle', {
+    Text = 'Anti Blind / Shaders / Fog',
+    Default = false,
+    Callback = function(value)
+        if value then
+            enableAntiBlind()
+        else
+            disableAntiBlind()
+        end
+    end
+})
+
+AntiShaderGroup:AddButton({
+    Text = 'Force Clear Screen',
+    Func = function()
+        if InstantTransition then
+            pcall(function()
+                InstantTransition:Fire(false)
+            end)
+            Library:Notify("Force clear sent", 2)
+        else
+            Library:Notify("No InstantScreenTransition found", 4)
+        end
+    end
+})
+
+-- ────────────────────────────────────────────────
+-- UI Settings
+-- ────────────────────────────────────────────────
+local MenuGroup = Tabs['UI Settings']:AddLeftGroupbox('Menu')
+MenuGroup:AddButton('Unload', function() Library:Unload() end)
+MenuGroup:AddLabel('Menu Bind'):AddKeyPicker('MenuKeybind', {Default = 'End', NoUI = true})
+
+Library.ToggleKeybind = Options.MenuKeybind
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({'MenuKeybind'})
+
+ThemeManager:SetFolder('KatyVampHub')
+SaveManager:SetFolder('KatyVampHub')
+SaveManager:BuildConfigSection(Tabs['UI Settings'])
+ThemeManager:ApplyToTab(Tabs['UI Settings'])
+SaveManager:LoadAutoloadConfig()
+
+Library:Notify('Hub loaded • Instant Remote Reset • Anti-Shaders & Blind • Safe', 6)
+print("Katy Vampire Legends 2 Hub • FULLY SAFE VERSION LOADED")
