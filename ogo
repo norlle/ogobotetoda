@@ -748,87 +748,107 @@ MysticFallsHop:AddButton({
 
 MysticFallsHop:AddLabel('• Public game (561 active, 35K favs, updated 1/12/26)<grok-card data-id="470227" data-type="citation_card" ></grok-card>')
 -- ────────────────────────────────────────────────
--- ANTI-CARRY / RELEASE FROM CARRY (Self + Everyone)
+-- ANTI-CARRY / AUTO ESCAPE USING EscapedCarry REMOTE
 -- ────────────────────────────────────────────────
--- Auto-releases YOU when carried | Button releases mouse target
--- Safe: CFrame jitter + destroy welds (undetectable)
+-- Основа: твой remote EscapedCarry:FireServer(player)
 
-local AntiCarryGroup = Tabs.Misc:AddLeftGroupbox('🆓 Anti Carry / Release')
+local AntiCarryGroup = Tabs.Misc:AddLeftGroupbox('🆓 Anti-Carry (EscapedCarry Remote)')
 
-local autoUncarrySelf = false
-local uncarryLoop = nil
+local autoEscapeSelf = false
+local escapeLoop = nil
 
-local function releaseFromCarry(targetChar)
-    if not targetChar or not targetChar:FindFirstChild("HumanoidRootPart") then return false end
-    local hrp = targetChar.HumanoidRootPart
-    
-    -- Method 1: Destroy welds/attachments (most common carry)
-    for _, obj in ipairs(hrp:GetChildren()) do
-        if obj:IsA("WeldConstraint") or obj:IsA("Attachment") or obj.Name:lower():find("weld") or obj.Name:lower():find("grip") then
-            obj:Destroy()
-        end
+local CarryRemote = game:GetService("ReplicatedStorage")
+    :WaitForChild("Remotes")
+    :WaitForChild("CarryService")
+    :WaitForChild("EscapedCarry")
+
+-- Функция освобождения конкретного игрока
+local function escapeCarry(targetPlayer)
+    if not targetPlayer or targetPlayer == LocalPlayer then
+        -- Для себя можно вызывать без аргументов или с собой
+        pcall(function()
+            CarryRemote:FireServer()
+        end)
+    else
+        pcall(function()
+            CarryRemote:FireServer(targetPlayer)
+        end)
     end
-    
-    -- Method 2: Unparent if welded to carrier
-    if hrp.Parent ~= targetChar then
-        hrp.Parent = targetChar
-    end
-    
-    -- Method 3: CFrame away (jitter safe)
-    local pos = hrp.Position + Vector3.new(math.random(-5,5), 5, math.random(-5,5))
-    hrp.CFrame = CFrame.new(pos)
-    
-    return true
 end
 
--- Auto for SELF
-AntiCarryGroup:AddToggle('AutoUncarrySelf', {
-    Text = 'Auto Release Self (when carried)',
+-- Авто-освобождение себя (когда тебя несут)
+AntiCarryGroup:AddToggle('AutoEscapeSelf', {
+    Text = 'Auto Escape (когда тебя несут)',
     Default = false,
-    Callback = function(v)
-        autoUncarrySelf = v
-        if v then
-            Library:Notify('🆓 Auto Uncarry Self → ON', 4)
-            uncarryLoop = task.spawn(function()
-                while autoUncarrySelf do
+    Callback = function(enabled)
+        autoEscapeSelf = enabled
+        
+        if enabled then
+            Library:Notify('🆓 Auto Escape → ВКЛ (тебя не унесут)', 4)
+            
+            escapeLoop = task.spawn(function()
+                while autoEscapeSelf do
+                    -- Проверяем, несёт ли нас кто-то (по состоянию или просто спамим)
                     pcall(function()
-                        releaseFromCarry(LocalPlayer.Character)
+                        escapeCarry()  -- Без аргументов — для себя
                     end)
-                    task.wait(0.15)  -- Safe 6Hz loop
+                    task.wait(math.random(8, 15) / 100)  -- 0.08–0.15s jitter
                 end
             end)
         else
-            Library:Notify('🆓 Auto Uncarry Self → OFF', 3)
-            if uncarryLoop then task.cancel(uncarryLoop) end
+            Library:Notify('🆓 Auto Escape → ВЫКЛ', 3)
+            if escapeLoop then
+                task.cancel(escapeLoop)
+                escapeLoop = nil
+            end
         end
     end
 })
 
--- Release mouse target (everyone)
+-- Кнопка: освободить любого игрока по имени
+AntiCarryGroup:AddInput('TargetPlayerName', {
+    Text = 'Имя игрока для освобождения',
+    Default = '',
+    Placeholder = 'Введи имя (например: L55577722)',
+    Callback = function(name)
+        if name == "" then return end
+        
+        local target = Players:FindFirstChild(name)
+        if target then
+            escapeCarry(target)
+            Library:Notify('Освобождаю: ' .. name, 3)
+        else
+            Library:Notify('Игрок "' .. name .. '" не найден', 4)
+        end
+    end
+})
+
+-- Кнопка: освободить того, на кого навёл курсор
 AntiCarryGroup:AddButton({
-    Text = 'Release Mouse Target',
+    Text = 'Освободить под курсором',
     Func = function()
         local target = mouse.Target
-        if target then
-            local char = target:FindFirstAncestorOfClass("Model")
-            local plr = Players:GetPlayerFromCharacter(char)
-            if char and char:FindFirstChild("Humanoid") then
-                if releaseFromCarry(char) then
-                    Library:Notify('Released ' .. (plr and plr.Name or 'player'), 3)
-                else
-                    Library:Notify('No carry detected', 2)
-                end
-            end
+        if not target then 
+            Library:Notify('Наведи на игрока', 3)
+            return 
+        end
+        
+        local char = target:FindFirstAncestorWhichIsA("Model")
+        if not char or not char:FindFirstChild("Humanoid") then
+            Library:Notify('Не игрок под курсором', 3)
+            return
+        end
+        
+        local player = Players:GetPlayerFromCharacter(char)
+        if player then
+            escapeCarry(player)
+            Library:Notify('Освобождаю: ' .. player.Name, 3)
         else
-            Library:Notify('Aim at carried player', 3)
+            Library:Notify('Не удалось определить игрока', 3)
         end
     end
 })
 
-AntiCarryGroup:AddLabel('💡 How:')
-AntiCarryGroup:AddLabel('• Toggle ON → Auto uncarry YOU')
-AntiCarryGroup:AddLabel('• Button → Aim & click carried enemy/teammate')
-AntiCarryGroup:AddLabel('• Works on vampire/werewolf carry (welds/CFrame)')
 -- ────────────────────────────────────────────────
 -- UI Settings
 -- ────────────────────────────────────────────────
