@@ -130,7 +130,70 @@ if Options.HitboxScale then
     Options.HitboxScale:OnChanged(function() currentScale = Options.HitboxScale.Value or 1 end)
 end
 
+-- ────────────────────────────────────────────────
+-- INFINITE HEALTH (Client-Forced Loop - Safe & Effective)
+-- ────────────────────────────────────────────────
+-- Uses PlayerStatsClient + Humanoid.Health loop
+-- Works because UI reads from PlayerStatsClient, but we override Humanoid
 
+local InfHealthGroup = Tabs.Combat:AddRightGroupbox('❤️ Infinite Health')
+
+local infHealthOn = false
+local infLoop = nil
+local playerStats = nil
+
+-- Lazy load PlayerStatsClient (from your decomp)
+pcall(function()
+    playerStats = require(game:GetService("ReplicatedStorage").ModuleScripts.ClientServices.PlayerStatsClient)
+end)
+
+local function forceInfiniteHealth()
+    if not LocalPlayer.Character then return end
+    local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    
+    -- Force max health (server may fight back, so loop fast)
+    humanoid.MaxHealth = 999999  -- High value to avoid overflow issues
+    humanoid.Health = humanoid.MaxHealth
+    
+    -- Optional: Fake PlayerStatsClient value (visual only, UI sync)
+    if playerStats then
+        pcall(function()
+            playerStats:setStat("Health", humanoid.MaxHealth)  -- If setter exists (rare)
+        end)
+    end
+end
+
+InfHealthGroup:AddToggle('InfiniteHealth', {
+    Text = 'Infinite Health (Loop)',
+    Default = false,
+    Callback = function(enabled)
+        infHealthOn = enabled
+        
+        if enabled then
+            Library:Notify('❤️ Infinite Health → ON (loop active)', 4)
+            
+            infLoop = task.spawn(function()
+                while infHealthOn do
+                    pcall(forceInfiniteHealth)
+                    task.wait(0.07)  -- ~14 Hz - fast enough, low kick risk
+                end
+            end)
+        else
+            Library:Notify('❤️ Infinite Health → OFF', 3)
+            if infLoop then
+                task.cancel(infLoop)
+                infLoop = nil
+            end
+        end
+    end
+})
+
+InfHealthGroup:AddLabel('How it survives:')
+InfHealthGroup:AddLabel('• Forces Humanoid.Health = Max every ~0.07s')
+InfHealthGroup:AddLabel('• High MaxHealth avoids some kill scripts')
+InfHealthGroup:AddLabel('• Works with your hitbox/ESP')
+InfHealthGroup:AddLabel('⚠️ If server resets health → combine with god mode immunity')
 -- ────────────────────────────────────────────────
 -- Names + Distance ESP (с фиксом комкования)
 -- ────────────────────────────────────────────────
