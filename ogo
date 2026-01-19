@@ -467,7 +467,71 @@ AntiShaderGroup:AddButton({
         end
     end
 })
+-- ────────────────────────────────────────────────
+-- Auto Shop Buyer
+-- ────────────────────────────────────────────────
+local ShopGroup = Tabs.Misc:AddLeftGroupbox('Auto Buy Items')
 
+local selectedItem = "HealingHerb"
+local amount = 1
+local buying = false
+
+ShopGroup:AddDropdown('ItemToBuy', {
+    Text = 'Item',
+    Default = 'HealingHerb',
+    Values = {
+        "HealingHerb", "Bouquet", "Candle", "Flashlight",
+        "WoodenStake", "VervainGrenade", "WolfsbaneGrenade",
+        "WhiteOakStake", "GoldenArrow", "RedOakStake",
+        "IncendiaryArrow", "ExplosiveArrow", "MagicShackles"
+    },
+    Callback = function(v)
+        selectedItem = v
+    end
+})
+
+ShopGroup:AddSlider('BuyAmount', {
+    Text = 'Amount (per click)',
+    Default = 1,
+    Min = 1,
+    Max = 50,
+    Rounding = 0,
+    Callback = function(v)
+        amount = v
+    end
+})
+
+ShopGroup:AddButton({
+    Text = 'Buy Once',
+    Func = function()
+        local remote = game.ReplicatedStorage.Remotes.GameServices.ToServer.ItemPurchaseRequested_
+        for i = 1, amount do
+            remote:FireServer("PurchaseTool", selectedItem)
+            task.wait(0.06)   -- tiny delay – helps avoid kick / rate-limit
+        end
+        Library:Notify("Sent ×" .. amount .. " → " .. selectedItem, 2.5)
+    end
+})
+
+ShopGroup:AddToggle('AutoBuyToggle', {
+    Text = 'Auto Buy (hold)',
+    Default = false,
+    Callback = function(v)
+        buying = v
+        if v then
+            Library:Notify("Auto-buy started → " .. selectedItem, 4)
+            task.spawn(function()
+                while buying do
+                    local remote = game.ReplicatedStorage.Remotes.GameServices.ToServer.ItemPurchaseRequested_
+                    remote:FireServer("PurchaseTool", selectedItem)
+                    task.wait(0.12) -- adjust if getting kicked / flagged
+                end
+            end)
+        else
+            Library:Notify("Auto-buy stopped", 3)
+        end
+    end
+})
 -- ────────────────────────────────────────────────
 -- UI Settings
 -- ────────────────────────────────────────────────
