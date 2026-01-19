@@ -749,6 +749,7 @@ MysticFallsHop:AddLabel('• Public game (561 active, 35K favs, updated 1/12/26)
 MysticFallsHop:AddLabel('• Ferryman/Soul Coins farmable (YouTube confirmed)<grok-card data-id="d09d66" data-type="citation_card" ></grok-card><grok-card data-id="64a8da" data-type="citation_card" ></grok-card>')
 MysticFallsHop:AddLabel('• 3AM GMT = 40-90ms EU servers')
 MysticFallsHop:AddLabel('After hop: Use Auto TP Coins + Quest Farm!')
+
 -- ────────────────────────────────────────────────
 -- UI Settings
 -- ────────────────────────────────────────────────
