@@ -659,107 +659,87 @@ SoulCoinGroup:AddLabel('• MF: Waterfall, Mill, Greenhouse, Parkour')
 
 
 -- ────────────────────────────────────────────────
--- LOW PING SERVER HOP for Mystic Falls Test (PlaceId: 9879021566)
+-- MYSTIC FALLS TEST LOW PING HOP (Fixed v4 - Debug + Limit 50)
 -- ────────────────────────────────────────────────
--- Updated for the test map you linked: https://www.roblox.com/games/9879021566/Mystic-Falls
--- This is likely the Mystic Falls map in Vampire Legends 2 / Legacies beta/test version.
--- Uses same low-ping sorting (EU/UK optimized for your Studley location ~3AM GMT = low latency servers)
 
-local MysticTestHop = Tabs.Misc:AddLeftGroupbox('Mystic Falls Test - Low Ping Hop')
+local MysticTestHop = Tabs.Misc:AddLeftGroupbox('Mystic Falls Test - Low Ping Hop (Fixed)')
 
-local maxPingTest = 120  -- Adjust for UK sweet spot (50-120ms)
-local placeIdTest = 9879021566  -- From your link
+local maxPingTest = 120
+local placeIdTest = 9879021566
 
 local function hopToLowPingMysticTest()
     local HttpService = game:GetService("HttpService")
     local TeleportService = game:GetService("TeleportService")
     local currentJobId = game.JobId
     
-    Library:Notify('🔍 Scanning Mystic Falls Test servers (low ping first)...', 4)
+    Library:Notify('Scanning Mystic Falls Test (limit 50, low ping first)...', 4)
     
     local servers = {}
     local cursor = nil
-    local pages = 0
+    local attempts = 0
     
     repeat
+        attempts = attempts + 1
         local success, result = pcall(function()
-            local url = "https://games.roblox.com/v1/games/" .. placeIdTest .. "/servers/Public?sortOrder=Asc&limit=100"
+            local url = "https://games.roblox.com/v1/games/" .. placeIdTest .. "/servers/Public?sortOrder=Asc&limit=50"
             if cursor then url = url .. "&cursor=" .. cursor end
             return HttpService:JSONDecode(game:HttpGet(url))
         end)
         
-        if success and result and result.data then
-            for _, server in result.data do
-                local ping = server.ping or 9999
-                local fillPercent = (server.playing / server.maxPlayers) * 100
-                
-                -- Filter: low ping + not too full + not current server
-                if ping <= maxPingTest and fillPercent <= 85 and server.id ~= currentJobId then
-                    table.insert(servers, {
-                        id = server.id,
-                        ping = ping,
-                        players = server.playing .. "/" .. server.maxPlayers,
-                        full = fillPercent
-                    })
+        if success then
+            if result and result.data then
+                for _, server in result.data do
+                    local ping = server.ping or 9999
+                    local fillPercent = (server.playing / server.maxPlayers) * 100
+                    if ping <= maxPingTest and fillPercent <= 85 and server.id ~= currentJobId then
+                        table.insert(servers, {
+                            id = server.id,
+                            ping = ping,
+                            players = server.playing .. "/" .. server.maxPlayers
+                        })
+                    end
                 end
+                cursor = result.nextPageCursor
+            else
+                warn("API returned no data or invalid format")
+                Library:Notify('API empty - game may have no public servers', 5)
+                break
             end
-            cursor = result.nextPageCursor
-            pages = pages + 1
         else
-            Library:Notify('API fetch failed - retry or check connection', 5)
-            return
+            warn("HttpGet failed: " .. tostring(result))  -- Print real error to console (F9)
+            Library:Notify('Fetch attempt ' .. attempts .. ' failed - retrying...', 3)
+            task.wait(1)
         end
-        task.wait(0.15)  -- Anti-rate-limit
-    until not cursor or pages >= 6  -- Up to ~600 servers
+    until not cursor or #servers > 0 or attempts >= 3
     
     if #servers == 0 then
-        Library:Notify('No suitable low-ping servers found 😔 Try raising Max Ping or off-peak hours', 5)
+        Library:Notify('No low-ping servers found (or API issue) - Rejoining current...', 5)
+        TeleportService:Teleport(placeIdTest)
         return
     end
     
-    -- Sort: Lowest ping → then lowest fill %
-    table.sort(servers, function(a, b)
-        if a.ping == b.ping then
-            return a.full < b.full
-        end
-        return a.ping < b.ping
-    end)
+    table.sort(servers, function(a, b) return a.ping < b.ping end)
     
     local best = servers[1]
-    Library:Notify('Best found: ' .. best.ping .. 'ms | ' .. best.players .. ' players → Hopping now!', 4)
+    Library:Notify('Best: ' .. best.ping .. 'ms | ' .. best.players .. ' → Hopping!', 4)
     
-    pcall(function()
-        TeleportService:TeleportToPlaceInstance(placeIdTest, best.id, LocalPlayer)
-    end)
+    pcall(TeleportService.TeleportToPlaceInstance, TeleportService, placeIdTest, best.id, LocalPlayer)
 end
 
 MysticTestHop:AddButton({
-    Text = '🚀 Hop to Lowest Ping in Mystic Falls Test',
-    Func = function()
-        hopToLowPingMysticTest()
-    end
+    Text = '🚀 Hop Low Ping (Fixed - Retry + Debug)',
+    Func = hopToLowPingMysticTest
 })
 
-MysticTestHop:AddSlider('MaxPingTest', {
-    Text = 'Max Allowed Ping (ms)',
-    Default = 120,
-    Min = 40,
-    Max = 250,
-    Rounding = 0,
-    Callback = function(val)
-        maxPingTest = val
-        Library:Notify('Max ping updated to ' .. val .. 'ms (UK optimized)', 2)
-    end
+MysticTestHop:AddSlider('MaxPingTest', {Text = 'Max Ping (ms)', Default = 120, Min = 40, Max = 250, Rounding = 0,
+    Callback = function(val) maxPingTest = val end
 })
 
-MysticTestHop:AddButton({
-    Text = 'Quick Rejoin Current Server',
-    Func = function()
-        game:GetService("TeleportService"):Teleport(9879021566)
-    end
-})
-
-MysticTestHop:AddLabel('• Expect 40-90ms EU servers right now')
+MysticTestHop:AddLabel('Debug Steps:')
+MysticTestHop:AddLabel('1. Click button → Check F9 console for "HttpGet failed: ..." error')
+MysticTestHop:AddLabel('2. Open browser: https://games.roblox.com/v1/games/9879021566/servers/Public?limit=50')
+MysticTestHop:AddLabel('   → If empty/error → no public servers (test place private/low activity)')
+MysticTestHop:AddLabel('3. If still fails → Try main Mystic Falls (4754736350) instead')
 -- ────────────────────────────────────────────────
 -- UI Settings
 -- ────────────────────────────────────────────────
