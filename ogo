@@ -130,140 +130,169 @@ if Options.HitboxScale then
     Options.HitboxScale:OnChanged(function() currentScale = Options.HitboxScale.Value or 1 end)
 end
 -- ────────────────────────────────────────────────
--- SILENT AIM + FOV CIRCLE (вставь сразу после Mega Hitbox)
+-- SILENT AIM (DAHOOD STYLE) - ВНЕШНИЙ RAYCAST HOOK
 -- ────────────────────────────────────────────────
+-- Вставь ПОСЛЕ Mega Hitbox (после Toggles.MegaHitboxEnabled:OnChanged)
 
-local SilentGroup = Tabs.Combat:AddLeftGroupbox('Silent Aim + FOV Circle')
+local SilentGroup = Tabs.Combat:AddLeftGroupbox('Silent Aim (Dahood Style)')
 
 SilentGroup:AddToggle('SilentAimEnabled', {
     Text = 'Enabled',
     Default = false,
-    Tooltip = 'Авто-целится в ближайшего в FOV • приоритет над Mega Hitbox'
+    Tooltip = 'Silent Aim без хука модулей • FOV + Predict • Raycast Override'
 })
 
 SilentGroup:AddSlider('SilentAimFOV', {
-    Text = 'FOV Radius (px)',
-    Default = 140,
-    Min = 40,
-    Max = 600,
+    Text = 'FOV Radius',
+    Default = 120,
+    Min = 30,
+    Max = 400,
     Rounding = 0
 })
 
 SilentGroup:AddToggle('SilentAimPredict', {
-    Text = 'Movement Prediction',
+    Text = 'Prediction',
+    Default = true
+})
+
+SilentGroup:AddToggle('SilentAimVisibleCheck', {
+    Text = 'Visible Check',
     Default = true,
-    Tooltip = 'Предсказание позиции по скорости'
+    Tooltip = 'Только видимые цели (raycast check)'
 })
 
 SilentGroup:AddLabel('FOV Color'):AddColorPicker('SilentAimFOVColor', {
-    Default = Color3.fromRGB(255, 80, 120)
+    Default = Color3.fromRGB(255, 0, 150)
 })
 
 -- ────────────── Переменные ──────────────
+local currentTarget = nil
 local fovCircle = Drawing.new("Circle")
 fovCircle.Thickness = 2
-fovCircle.NumSides = 60
+fovCircle.NumSides = 64
 fovCircle.Filled = false
-fovCircle.Transparency = 0.75
+fovCircle.Transparency = 0.8
+fovCircle.Radius = 120
 fovCircle.Visible = false
 
-local PREDICT_FACTOR = 320   -- подстрой под скорость пуль/проектил в игре (studs/s)
+local PREDICT_TIME = 0.12  -- время полёта (настрой под скорость снарядов)
 
-local function getPredictedHeadPos(targetRoot, targetHead)
-    if not Toggles.SilentAimPredict.Value then
-        return targetHead.Position
+-- ────────────── Поиск цели ──────────────
+local function getClosestTargetInFOV()
+    local mousePos = Vector2.new(mouse.X, mouse.Y)
+    local fovRadius = Options.SilentAimFOV.Value
+    local closest, closestDist = nil, math.huge
+
+    for _, plr in Players:GetPlayers() do
+        if plr == LocalPlayer or not plr.Character then continue end
+        local char = plr.Character
+        local root = char:FindFirstChild("HumanoidRootPart")
+        local head = char:FindFirstChild("Head")
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not (root and head and hum and hum.Health > 0) then continue end
+
+        -- Prediction
+        local targetPos = head.Position
+        if Toggles.SilentAimPredict.Value then
+            local vel = root.Velocity
+            targetPos = targetPos + vel * PREDICT_TIME
+        end
+
+        -- Screen pos + FOV check
+        local screenPos, visible = Camera:WorldToViewportPoint(targetPos)
+        local dist2d = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+        if dist2d > fovRadius then continue end
+
+        -- Visible check (optional raycast)
+        if Toggles.SilentAimVisibleCheck.Value then
+            local rayDir = (targetPos - Camera.CFrame.Position).Unit * 1000
+            local params = RaycastParams.new()
+            params.FilterDescendantsInstances = {LocalPlayer.Character, char}
+            params.FilterType = Enum.RaycastFilterType.Blacklist
+            local result = workspace:Raycast(Camera.CFrame.Position, rayDir, params)
+            if not result or not result.Instance:IsDescendantOf(char) then continue end
+        end
+
+        if dist2d < closestDist then
+            closestDist = dist2d
+            closest = char
+        end
     end
-    
-    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not myRoot then return targetHead.Position end
-    
-    local distance = (targetHead.Position - myRoot.Position).Magnitude
-    local velocity = targetRoot.Velocity
-    local flightTime = distance / PREDICT_FACTOR
-    
-    return targetHead.Position + velocity * flightTime
+
+    return closest
 end
 
--- ────────────── FOV обновление ──────────────
-local function UpdateFovCircle()
+-- ────────────── FOV Circle Update ──────────────
+local function updateFOV()
+    if not Toggles.SilentAimEnabled.Value then
+        fovCircle.Visible = false
+        currentTarget = nil
+        return
+    end
+
     fovCircle.Position = Vector2.new(mouse.X, mouse.Y)
-    fovCircle.Radius   = Options.SilentAimFOV.Value
-    fovCircle.Color    = Options.SilentAimFOVColor.Value
-    fovCircle.Visible  = Toggles.SilentAimEnabled.Value
+    fovCircle.Radius = Options.SilentAimFOV.Value
+    fovCircle.Color = Options.SilentAimFOVColor.Value
+    fovCircle.Visible = true
+
+    -- Update target
+    currentTarget = getClosestTargetInFOV()
 end
 
--- ────────────── Логика Silent Aim внутри hookedHitscan ──────────────
--- Замени полностью функцию hookedHitscan на эту версию (или добавь silent-часть в начало существующей)
+-- ────────────── RAYCAST HOOK (Dahood Style) ──────────────
+local mt = getrawmetatable(game)
+local oldNamecall = mt.__namecall
+setreadonly(mt, false)
 
-local function hookedHitscan(self)
-    if Toggles.SilentAimEnabled.Value then
-        local bestTarget = nil
-        local bestDist   = Options.SilentAimFOV.Value + 1
-        local mousePos   = Vector2.new(mouse.X, mouse.Y)
-        
-        for _, player in Players:GetPlayers() do
-            if player == LocalPlayer or not player.Character then continue end
-            
-            local char = player.Character
-            local root = char:FindFirstChild("HumanoidRootPart")
-            local head = char:FindFirstChild("Head")
-            local hum  = char:FindFirstChildOfClass("Humanoid")
-            
-            if not (root and head and hum and hum.Health > 0) then continue end
-            
-            local predictPos = getPredictedHeadPos(root, head)
-            local screenPos, onScreen = Camera:WorldToViewportPoint(predictPos)
-            if not onScreen then continue end
-            
-            local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-            if screenDist > Options.SilentAimFOV.Value then continue end
-            
-            local canAffect = AbilityHandler and AbilityHandler.canBeAffected(player, self._name or "Unknown")
-            if canAffect and screenDist < bestDist then
-                bestDist   = screenDist
-                bestTarget = char
+mt.__namecall = newcclosure(function(self, ...)
+    local args = {...}
+    local method = getnamecallmethod()
+
+    if Toggles.SilentAimEnabled.Value and method == "Raycast" and self == workspace and currentTarget then
+        -- Check if this ray is from camera/mouse (origin near camera, direction screen-like)
+        local origin, direction = args[1], args[2]if origin and direction then
+            local camPos = Camera.CFrame.Position
+            if (origin - camPos).Magnitude < 5 then  -- ray from camera
+                local mouseRay = Camera:ScreenPointToRay(mouse.X, mouse.Y)
+                local mouseDir = mouseRay.Direction
+                if direction.Unit:Dot(mouseDir.Unit) > 0.95 then  -- same direction as mouse
+                    -- Fake RaycastResult на цель (head)
+                    local targetHead = currentTarget:FindFirstChild("Head")
+                    if targetHead then
+                        local hitPos = targetHead.Position
+                        return RaycastResult.new(
+                            targetHead,
+                            hitPos,
+                            (hitPos - origin).Unit,
+                            targetHead.AssemblyLinearVelocity
+                        )
+                    end
+                end
             end
         end
-        
-        if bestTarget then
-            return bestTarget
-        end
     end
-    
-    -- Если silent не сработал → идём в mega hitbox (если включён)
-    if hitboxEnabled then
-        -- тут оставь весь твой оригинальный код mega hitbox
-        -- (от local cam = ... до return best or oldHitscan(self))
-        -- .......................................................
-        -- (вставь свой код mega сюда)
-    end
-    
-    -- Оригинальный hitscan
-    return oldHitscan and oldHitscan(self)
-end
 
--- ────────────── Переключение Silent Aim ──────────────
-Toggles.SilentAimEnabled:OnChanged(function(value)
-    if value or hitboxEnabled then
-        if not oldHitscan and HitDetection then
-            oldHitscan = HitDetection.Hitscan
-            HitDetection.Hitscan = hookedHitscan
-        end
+    return oldNamecall(self, ...)
+end)
+
+setreadonly(mt, true)
+
+-- ────────────── Toggle & Updates ──────────────
+Toggles.SilentAimEnabled:OnChanged(function()
+    if Toggles.SilentAimEnabled.Value then
+        Library:Notify('Silent Aim (Dahood) → ON', 3)
     else
-        if oldHitscan and HitDetection then
-            HitDetection.Hitscan = oldHitscan
-            oldHitscan = nil
-        end
+        currentTarget = nil
+        Library:Notify('Silent Aim → OFF', 2)
     end
 end)
 
--- ────────────── Render ──────────────
-RunService.RenderStepped:Connect(UpdateFovCircle)
-
--- Опционально: обновление радиуса при смене слайдера
 Options.SilentAimFOV:OnChanged(function()
     fovCircle.Radius = Options.SilentAimFOV.Value
 end)
+
+-- ────────────── Render Loop ──────────────
+RunService.Heartbeat:Connect(updateFOV)  -- Heartbeat > RenderStepped для perf
 
 -- ────────────────────────────────────────────────
 -- Names + Distance ESP (с фиксом комкования)
